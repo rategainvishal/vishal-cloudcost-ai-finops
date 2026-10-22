@@ -1,0 +1,25 @@
+#!/bin/bash
+
+echo "=== AWS Unused Volumes Finder ==="
+
+# 1. Fetching the list of AWS Volumes that are 'available' (Not attached to any EC2 instance)
+unused_volumes=$(aws ec2 describe-volumes \
+    --filters "Name=status,Values=available" \
+    --query "Volumes[*].{ID:VolumeId,Size:Size,Zone:AvailabilityZone}" \
+    --output table 2>&1)
+
+# 2. Check if there was an authentication or connection error
+if [[ "$unused_volumes" == *"Error"* ]] || [[ "$unused_volumes" == *"AuthFailure"* ]]; then
+    echo "AWS Connection Error: Please check your AWS CLI credentials."
+    echo "Details: $unused_volumes"
+    exit 1
+fi
+
+# 3. Displaying the results on screen
+if [ -z "$unused_volumes" ] || [ "$unused_volumes" == "None" ]; then
+    echo "Congratulations! There are no unused Volumes wasting money in your account."
+    echo "Your Cloud is clean! 🎉"
+else
+    echo "The following Volumes are unattached and wasting your money:"
+    echo "$unused_volumes"
+fi
