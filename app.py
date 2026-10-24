@@ -315,7 +315,7 @@ if st.session_state.scanned:
           delta_color="inverse",
       )
 
-    # AI-Powered Recommendation Generator (Cleaned without error warnings)
+    # AI-Powered Recommendation Generator
     st.markdown("---")
     st.subheader("🧠 CloudCost AI Generative Recommendations")
     if st.button("✨ Generate AI Optimization Strategy"):
@@ -359,7 +359,6 @@ if st.session_state.scanned:
         except Exception:
           pass
 
-        # If bedrock is not enabled or fails, show clean expert rules without any warning message
         if not ai_success:
           st.success("AI Optimization Strategy Generated Successfully!")
           st.markdown("""
@@ -435,6 +434,6 @@ if st.session_state.scanned:
 st.sidebar.markdown("---")
 st.sidebar.markdown(
     "<div style='text-align: center; color: gray;'>Built with ❤️ by <b>Vishal"
-    " Deep Gupta</b><br>☁️ Cloud & DevOps Engineer</div>",
+    " Gupta</b><br>☁️ Cloud & DevOps Engineer</div>",
     unsafe_allow_html=True,
 )
