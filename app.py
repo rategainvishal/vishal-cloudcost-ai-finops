@@ -33,20 +33,27 @@ fetch_cost_history = st.sidebar.checkbox(
 )
 
 # Helper function to get boto3 client securely from Streamlit Secrets or environment
-def get_boto3_client(service_name, region_name):
+def get_boto3_client(service_name, region_name=None):
   try:
-    # Streamlit Cloud secrets se keys lene ki koshish karega
     aws_access_key = st.secrets["AWS_ACCESS_KEY_ID"]
     aws_secret_key = st.secrets["AWS_SECRET_ACCESS_KEY"]
-    return boto3.client(
-        service_name,
-        aws_access_key_id=aws_access_key,
-        aws_secret_access_key=aws_secret_key,
-        region_name=region_name,
-    )
+    if region_name:
+      return boto3.client(
+          service_name,
+          aws_access_key_id=aws_access_key,
+          aws_secret_access_key=aws_secret_key,
+          region_name=region_name,
+      )
+    else:
+      return boto3.client(
+          service_name,
+          aws_access_key_id=aws_access_key,
+          aws_secret_access_key=aws_secret_key,
+      )
   except Exception:
-    # Agar local machine par hain aur secrets configured nahi hain, toh default profile use karega
-    return boto3.client(service_name, region_name=region_name)
+    if region_name:
+      return boto3.client(service_name, region_name=region_name)
+    return boto3.client(service_name)
 
 
 # Session state initialization
@@ -56,6 +63,7 @@ if "scanned" not in st.session_state:
   st.session_state.eips = []
   st.session_state.elbs = []
   st.session_state.instances = []
+  st.session_state.s3_buckets = []
   st.session_state.cost_data = []
 
 
@@ -65,17 +73,55 @@ def run_scan(regions, fetch_costs):
   all_eips = []
   all_elbs = []
   all_instances = []
+  all_s3_buckets = []
 
   with st.spinner(
-      "Scanning AWS infrastructure via Boto3 and fetching Cost Explorer data..."
-      " Please wait..."
+      "Scanning AWS infrastructure (EC2, ELB, S3) via Boto3 and fetching Cost"
+      " Explorer data... Please wait..."
   ):
+    # 1. Scan S3 Buckets (Global Service)
+    try:
+      s3_client = get_boto3_client("s3")
+      buckets_res = s3_client.list_buckets()
+      for b in buckets_res.get("Buckets", []):
+        b_name = b.get("Name")
+        try:
+          loc_res = s3_client.get_bucket_location(Bucket=b_name)
+          reg = loc_res.get("LocationConstraint") or "us-east-1"
+          if reg == "EU":
+            reg = "eu-west-1"
+        except Exception:
+          reg = "us-east-1"
+
+        # Check if bucket matches selected regions or include all
+        if reg in regions or not regions:
+          # Check Lifecycle configuration
+          has_lifecycle = True
+          try:
+            s3_client.get_bucket_lifecycle_configuration(Bucket=b_name)
+          except Exception:
+            has_lifecycle = False
+
+          all_s3_buckets.append({
+              "Name": b_name,
+              "Region": reg,
+              "CreationDate": (
+                  b.get("CreationDate").strftime("%Y-%m-%d")
+                  if b.get("CreationDate")
+                  else "N/A"
+              ),
+              "HasLifecycle": has_lifecycle,
+          })
+    except Exception as e:
+      st.error(f"Error scanning S3 buckets: {e}")
+
+    # 2. Scan Regional EC2 and ELB Resources
     for reg in regions:
       try:
         ec2 = get_boto3_client("ec2", reg)
         elbv2 = get_boto3_client("elbv2", reg)
 
-        # 1. Scan unattached EBS Volumes
+        # Unattached EBS Volumes
         ebs_res = ec2.describe_volumes(
             Filters=[{"Name": "status", "Values": ["available"]}]
         )
@@ -87,7 +133,7 @@ def run_scan(regions, fetch_costs):
               "Region": reg,
           })
 
-        # 2. Scan unattached Elastic IPs
+        # Unattached Elastic IPs
         eip_res = ec2.describe_addresses()
         for addr in eip_res.get("Addresses", []):
           if "AssociationId" not in addr:
@@ -97,7 +143,7 @@ def run_scan(regions, fetch_costs):
                 "Region": reg,
             })
 
-        # 3. Scan Load Balancers
+        # Load Balancers
         elb_res = elbv2.describe_load_balancers()
         for lb in elb_res.get("LoadBalancers", []):
           all_elbs.append({
@@ -107,18 +153,18 @@ def run_scan(regions, fetch_costs):
               "Region": reg,
           })
 
-        # 4. Scan Stopped EC2 Instances
+        # Stopped EC2 Instances
         ec2_res = ec2.describe_instances(
             Filters=[{"Name": "instance-state-name", "Values": ["stopped"]}]
         )
         for reservation in ec2_res.get("Reservations", []):
           for inst in reservation.get("Instances", []):
             launch_time = inst.get("LaunchTime")
-            if launch_time:
-              launch_time_str = launch_time.strftime("%Y-%m-%d %H:%M:%S")
-            else:
-              launch_time_str = "N/A"
-
+            launch_time_str = (
+                launch_time.strftime("%Y-%m-%d %H:%M:%S")
+                if launch_time
+                else "N/A"
+            )
             all_instances.append({
                 "ID": inst.get("InstanceId"),
                 "Type": inst.get("InstanceType"),
@@ -133,7 +179,7 @@ def run_scan(regions, fetch_costs):
     cost_records = []
     if fetch_costs:
       try:
-        ce = get_boto3_client("ce", "us-east-1")  # Cost Explorer runs in us-east-1
+        ce = get_boto3_client("ce", "us-east-1")
         end_date = datetime.date.today().strftime("%Y-%m-%d")
         start_date = (
             datetime.date.today() - datetime.timedelta(days=90)
@@ -162,6 +208,7 @@ def run_scan(regions, fetch_costs):
   st.session_state.eips = all_eips
   st.session_state.elbs = all_elbs
   st.session_state.instances = all_instances
+  st.session_state.s3_buckets = all_s3_buckets
   st.session_state.cost_data = cost_records
   st.session_state.scanned = True
 
@@ -177,6 +224,7 @@ if st.session_state.scanned:
   eips = st.session_state.eips
   elbs = st.session_state.elbs
   instances = st.session_state.instances
+  s3_buckets = st.session_state.s3_buckets
   cost_data = st.session_state.cost_data
 
   # Display Cost Explorer Trend Chart if available
@@ -186,7 +234,13 @@ if st.session_state.scanned:
     st.bar_chart(df_cost.set_index("Month"))
     st.markdown("---")
 
-  total_issues = len(volumes) + len(eips) + len(elbs) + len(instances)
+  total_issues = (
+      len(volumes)
+      + len(eips)
+      + len(elbs)
+      + len(instances)
+      + len([b for b in s3_buckets if not b["HasLifecycle"]])
+  )
 
   st.subheader("📊 Scan Results & Multi-Region Resource Analysis")
 
@@ -194,7 +248,9 @@ if st.session_state.scanned:
     st.error(
         f"⚠️ Inefficient or idle resources detected! Found {len(volumes)} EBS"
         f" volume(s), {len(eips)} unattached EIP(s), {len(elbs)} Load"
-        f" Balancer(s), and {len(instances)} stopped EC2 instance(s)."
+        f" Balancer(s), {len(instances)} stopped EC2 instance(s), and"
+        f" {len([b for b in s3_buckets if not b['HasLifecycle']])} S3"
+        f" bucket(s) missing lifecycle policies."
     )
 
     with st.expander("View Raw JSON Scan Outputs"):
@@ -206,6 +262,8 @@ if st.session_state.scanned:
       st.json(eips)
       st.write("**Load Balancers:**")
       st.json(elbs)
+      st.write("**S3 Buckets Analysis:**")
+      st.json(s3_buckets)
 
     st.markdown("---")
     st.subheader("🤖 AI FinOps Advisor Report & Cost Impact")
@@ -215,9 +273,16 @@ if st.session_state.scanned:
     est_eip_cost = len(eips) * 3.60
     est_elb_cost = len(elbs) * 18.00
     est_stopped_ec2_cost = len(instances) * 2.40
+    est_s3_waste = (
+        len([b for b in s3_buckets if not b["HasLifecycle"]]) * 10.00
+    )  # Estimated optimization potential
 
     total_est_waste = (
-        est_ebs_cost + est_eip_cost + est_elb_cost + est_stopped_ec2_cost
+        est_ebs_cost
+        + est_eip_cost
+        + est_elb_cost
+        + est_stopped_ec2_cost
+        + est_s3_waste
     )
 
     col1, col2, col3, col4 = st.columns(4)
@@ -237,9 +302,9 @@ if st.session_state.scanned:
       )
     with col3:
       st.metric(
-          label="Idle Elastic IPs",
-          value=f"{len(eips)} EIP(s)",
-          delta=f"-{len(eips)} IP",
+          label="S3 Without Lifecycle",
+          value=f"{len([b for b in s3_buckets if not b['HasLifecycle']])} Bucket(s)",
+          delta="Optimization Needed",
           delta_color="inverse",
       )
     with col4:
@@ -287,6 +352,15 @@ if st.session_state.scanned:
           "Details": f"Type: {inst.get('Type')}",
           "Est. Monthly Waste ($)": 2.40,
       })
+    for b in s3_buckets:
+      if not b["HasLifecycle"]:
+        report_rows.append({
+            "Resource Type": "S3 Bucket (No Lifecycle)",
+            "Resource Identifier": b["Name"],
+            "Region": b["Region"],
+            "Details": f"Created: {b['CreationDate']}",
+            "Est. Monthly Waste ($)": 10.00,
+        })
 
     df_report = pd.DataFrame(report_rows)
     csv_data = df_report.to_csv(index=False).encode("utf-8")
@@ -308,7 +382,6 @@ if st.session_state.scanned:
     )
 
     if enable_cleanup:
-      # EBS Cleanup Section
       if volumes:
         st.markdown("#### Unattached EBS Volumes Cleanup")
         for v in volumes:
@@ -331,7 +404,6 @@ if st.session_state.scanned:
               except Exception as e:
                 st.error(f"Error: {e}")
 
-      # EIP Cleanup Section
       if eips:
         st.markdown("#### Unattached Elastic IPs Cleanup")
         for e in eips:
@@ -363,7 +435,21 @@ if st.session_state.scanned:
       )
 
     st.markdown("---")
-    st.subheader("📌 Detailed Recommendations")
+    st.subheader("📌 Detailed Recommendations & S3 Governance")
+    for b in s3_buckets:
+      if not b["HasLifecycle"]:
+        st.warning(
+            f"**S3 Lifecycle Recommendation:** Bucket `{b['Name']}` in Region"
+            f" **{b['Region']}** does not have a Lifecycle Policy configured."
+            " Consider adding rules to transition old objects to Glacier or"
+            " delete incomplete multipart uploads."
+        )
+      else:
+        st.info(
+            f"**S3 Governance OK:** Bucket `{b['Name']}` in Region"
+            f" **{b['Region']}** has lifecycle rules configured."
+        )
+
     for inst in instances:
       st.warning(
           f"**Stopped EC2 Recommendation:** Instance (`{inst.get('ID')}`) in"
