@@ -1,4 +1,5 @@
 import datetime
+import json
 import boto3
 import pandas as pd
 import streamlit as st
@@ -95,9 +96,7 @@ def run_scan(regions, fetch_costs):
         except Exception:
           reg = "us-east-1"
 
-        # Check if bucket matches selected regions or include all
         if reg in regions or not regions:
-          # Check Lifecycle configuration
           has_lifecycle = True
           try:
             s3_client.get_bucket_lifecycle_configuration(Bucket=b_name)
@@ -229,7 +228,6 @@ if st.session_state.scanned:
   s3_buckets = st.session_state.s3_buckets
   cost_data = st.session_state.cost_data
 
-  # Display Cost Explorer Trend Chart if available
   if cost_data:
     st.subheader("📈 Historical Cloud Spend Trend (Last 3 Months)")
     df_cost = pd.DataFrame(cost_data)
@@ -316,6 +314,57 @@ if st.session_state.scanned:
           delta="High Priority",
           delta_color="inverse",
       )
+
+    # --- NEW: AI-Powered Recommendation Generator via AWS Bedrock ---
+    st.markdown("---")
+    st.subheader("🧠 CloudCost AI Generative Recommendations")
+    if st.button("✨ Generate AI Optimization Strategy"):
+      with st.spinner(
+          "Analyzing cloud waste vectors with AWS Bedrock AI Model..."
+      ):
+        try:
+          bedrock = get_boto3_client("bedrock-runtime", "us-east-1")
+          prompt_data = {
+              "stopped_instances": len(instances),
+              "unattached_ebs_gb": total_ebs_size,
+              "unattached_eips": len(eips),
+              "load_balancers": len(elbs),
+              "s3_missing_lifecycle": len(
+                  [b for b in s3_buckets if not b["HasLifecycle"]]
+              ),
+          }
+          payload = {
+              "anthropic_version": "bedrock-2023-05-31",
+              "max_tokens": 400,
+              "messages": [{
+                  "role": "user",
+                  "content": (
+                      "You are an expert Cloud FinOps AI Engineer. Review this"
+                      " idle resource summary: "
+                      f"{json.dumps(prompt_data)}. Provide 3 actionable,"
+                      " professional bullet points on why these should be"
+                      " remediated and the long-term architectural benefits."
+                  ),
+              }],
+          }
+          response = bedrock.invoke_model(
+              modelId="anthropic.claude-3-haiku-20240307-1v1:0",
+              body=json.dumps(payload),
+          )
+          result_body = json.loads(response.get("body").read())
+          ai_advice = result_body.get("content", [{}])[0].get("text", "")
+          st.success("AI Recommendation Generated Successfully!")
+          st.info(ai_advice)
+        except Exception as e:
+          st.warning(
+              "AWS Bedrock AI model invocation note: Falling back to expert"
+              f" heuristic rules. (Reason: {e})"
+          )
+          st.markdown("""
+                    * **EBS Volume Waste:** Unattached volumes continue incurring storage fees without serving workloads. Snapshot and terminate them immediately.
+                    * **Compute Governance:** Stopped EC2 instances consume EBS root volumes. Consider creating AMIs and terminating instances until needed.
+                    * **Storage Lifecycle:** S3 buckets lacking lifecycle rules accumulate unbounded log and object data. Implement 30-day IA transitions.
+                    """)
 
     # Export CSV Feature
     st.markdown("---")
@@ -434,46 +483,6 @@ if st.session_state.scanned:
       st.info(
           "💡 Check the 'Enable Risk Mode' checkbox above to unlock direct"
           " cleanup and deletion buttons for safe resource management."
-      )
-
-    st.markdown("---")
-    st.subheader("📌 Detailed Recommendations & S3 Governance")
-    for b in s3_buckets:
-      if not b["HasLifecycle"]:
-        st.warning(
-            f"**S3 Lifecycle Recommendation:** Bucket `{b['Name']}` in Region"
-            f" **{b['Region']}** does not have a Lifecycle Policy configured."
-            " Consider adding rules to transition old objects to Glacier or"
-            " delete incomplete multipart uploads."
-        )
-      else:
-        st.info(
-            f"**S3 Governance OK:** Bucket `{b['Name']}` in Region"
-            f" **{b['Region']}** has lifecycle rules configured."
-        )
-
-    for inst in instances:
-      st.warning(
-          f"**Stopped EC2 Recommendation:** Instance (`{inst.get('ID')}`) in"
-          f" Region **{inst.get('Region')}** is in **STOPPED** state."
-      )
-
-    for v in volumes:
-      st.info(
-          f"**EBS Note:** Unattached volume (`{v.get('ID')}`) in"
-          f" **{v.get('Region')}** is ready for cleanup."
-      )
-
-    for e in eips:
-      st.info(
-          f"**Elastic IP Note:** Unattached Public IP (`{e.get('PublicIp')}`)"
-          f" in **{e.get('Region')}** can be safely released."
-      )
-
-    for lb in elbs:
-      st.info(
-          f"**Load Balancer Review:** Found Load Balancer `{lb.get('Name')}` in"
-          f" **{lb.get('Region')}**."
       )
   else:
     st.success(
