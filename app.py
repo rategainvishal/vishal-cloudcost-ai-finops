@@ -82,7 +82,7 @@ def run_scan(regions, fetch_costs):
       "Scanning AWS infrastructure (EC2, ELB, S3) via Boto3 and fetching Cost"
       " Explorer data... Please wait..."
   ):
-    # 1. Scan S3 Buckets (Global Service)
+    # 1. Scan S3 Buckets (Global Service - Handled gracefully for SCP/AccessDenied)
     try:
       s3_client = get_boto3_client("s3")
       buckets_res = s3_client.list_buckets()
@@ -114,7 +114,10 @@ def run_scan(regions, fetch_costs):
               "HasLifecycle": has_lifecycle,
           })
     except Exception as e:
-      st.error(f"Error scanning S3 buckets: {e}")
+      st.warning(
+          "⚠️ S3 bucket scan skipped due to AWS Organization SCP policy or"
+          f" permissions: {e}"
+      )
 
     # 2. Scan Regional EC2 and ELB Resources
     for reg in regions:
@@ -315,7 +318,7 @@ if st.session_state.scanned:
           delta_color="inverse",
       )
 
-    # --- NEW: AI-Powered Recommendation Generator via AWS Bedrock ---
+    # AI-Powered Recommendation Generator via AWS Bedrock
     st.markdown("---")
     st.subheader("🧠 CloudCost AI Generative Recommendations")
     if st.button("✨ Generate AI Optimization Strategy"):
