@@ -114,7 +114,6 @@ def run_scan(regions, fetch_costs):
               "HasLifecycle": has_lifecycle,
           })
     except Exception:
-      # Silently bypass S3 global list restriction if blocked by SCP/IAM
       pass
 
     # 2. Scan Regional EC2 and ELB Resources
@@ -425,66 +424,53 @@ if st.session_state.scanned:
         type="primary",
     )
 
+    # --- Demo Mode Remediation Section for Portfolio Showcase ---
     st.markdown("---")
-    st.subheader("⚡ One-Click Remediation & Cleanup")
-
-    enable_cleanup = st.checkbox(
-        "⚠️ Enable Risk Mode: Allow resource deletion and release actions from"
-        " dashboard"
+    st.subheader("⚡ One-Click Remediation & Cleanup (Demo Mode)")
+    st.info(
+        "🔒 **Security Note for Recruiters:** Remediation actions are running in"
+        " Safe/Demo Mode. Action buttons are visible for architectural"
+        " demonstration, but live resource deletion is restricted."
     )
 
-    if enable_cleanup:
-      if volumes:
-        st.markdown("#### Unattached EBS Volumes Cleanup")
-        for v in volumes:
-          vol_id = v.get("ID")
-          reg = v.get("Region", "ap-south-1")
-          col_a, col_b = st.columns([3, 1])
-          with col_a:
-            st.warning(
-                f"Volume `{vol_id}` ({v.get('Size')} GB) in Region **{reg}**"
-                f" (`{v.get('Zone')}`)"
+    if volumes:
+      st.markdown("#### Unattached EBS Volumes Cleanup (Preview)")
+      for v in volumes:
+        vol_id = v.get("ID")
+        reg = v.get("Region", "ap-south-1")
+        col_a, col_b = st.columns([3, 1])
+        with col_a:
+          st.warning(
+              f"Volume `{vol_id}` ({v.get('Size')} GB) in Region **{reg}**"
+              f" (`{v.get('Zone')}`)"
+          )
+        with col_b:
+          if st.button(f"Delete {vol_id}", key=f"del_vol_{vol_id}_{reg}"):
+            st.toast(
+                "⚠️ Demo Mode: Live deletion is disabled in public portfolio"
+                " view.",
+                icon="🔒",
             )
-          with col_b:
-            if st.button(f"Delete {vol_id}", key=f"del_vol_{vol_id}_{reg}"):
-              try:
-                ec2_del = get_boto3_client("ec2", reg)
-                ec2_del.delete_volume(VolumeId=vol_id)
-                st.success(f"Successfully deleted volume {vol_id} from {reg}!")
-                run_scan(aws_regions, fetch_cost_history)
-                st.rerun()
-              except Exception as e:
-                st.error(f"Error: {e}")
 
-      if eips:
-        st.markdown("#### Unattached Elastic IPs Cleanup")
-        for e in eips:
-          alloc_id = e.get("AllocationId")
-          public_ip = e.get("PublicIp")
-          reg = e.get("Region", "ap-south-1")
-          col_a, col_b = st.columns([3, 1])
-          with col_a:
-            st.warning(
-                f"Public IP `{public_ip}` (Allocation ID: `{alloc_id}`) in"
-                f" Region **{reg}**"
+    if eips:
+      st.markdown("#### Unattached Elastic IPs Cleanup (Preview)")
+      for e in eips:
+        alloc_id = e.get("AllocationId")
+        public_ip = e.get("PublicIp")
+        reg = e.get("Region", "ap-south-1")
+        col_a, col_b = st.columns([3, 1])
+        with col_a:
+          st.warning(
+              f"Public IP `{public_ip}` (Allocation ID: `{alloc_id}`) in"
+              f" Region **{reg}**"
+          )
+        with col_b:
+          if st.button(f"Release {public_ip}", key=f"rel_eip_{alloc_id}_{reg}"):
+            st.toast(
+                "⚠️ Demo Mode: Live release is disabled in public portfolio"
+                " view.",
+                icon="🔒",
             )
-          with col_b:
-            if st.button(f"Release {public_ip}", key=f"rel_eip_{alloc_id}_{reg}"):
-              try:
-                ec2_rel = get_boto3_client("ec2", reg)
-                ec2_rel.release_address(AllocationId=alloc_id)
-                st.success(
-                    f"Successfully released EIP {public_ip} from {reg}!"
-                )
-                run_scan(aws_regions, fetch_cost_history)
-                st.rerun()
-              except Exception as e:
-                st.error(f"Error: {e}")
-    else:
-      st.info(
-          "💡 Check the 'Enable Risk Mode' checkbox above to unlock direct"
-          " cleanup and deletion buttons for safe resource management."
-      )
   else:
     st.success(
         "🎉 Your cloud is fully optimized across all selected regions! No idle"
