@@ -10,7 +10,8 @@ st.set_page_config(
 
 st.title("☁️ CloudCost AI - SaaS Cost Optimization Dashboard")
 st.markdown(
-    "Automated FinOps tool to detect idle cloud resources, track historical spend trends, and eliminate unnecessary expenses."
+    "Automated FinOps tool to detect idle cloud resources, track historical"
+    " spend trends, and eliminate unnecessary expenses."
 )
 
 # Sidebar for Region Selection & Cost Explorer
@@ -31,6 +32,7 @@ aws_regions = st.sidebar.multiselect(
 fetch_cost_history = st.sidebar.checkbox(
     "📈 Fetch 3-Month Cost Explorer Trends", value=True
 )
+
 
 # Helper function to get boto3 client securely from Streamlit Secrets or environment
 def get_boto3_client(service_name, region_name=None):
@@ -275,7 +277,7 @@ if st.session_state.scanned:
     est_stopped_ec2_cost = len(instances) * 2.40
     est_s3_waste = (
         len([b for b in s3_buckets if not b["HasLifecycle"]]) * 10.00
-    )  # Estimated optimization potential
+    )
 
     total_est_waste = (
         est_ebs_cost
@@ -393,88 +395,4 @@ if st.session_state.scanned:
                 f"Volume `{vol_id}` ({v.get('Size')} GB) in Region **{reg}**"
                 f" (`{v.get('Zone')}`)"
             )
-          with col_b:
-            if st.button(f"Delete {vol_id}", key=f"del_vol_{vol_id}_{reg}"):
-              try:
-                ec2_del = get_boto3_client("ec2", reg)
-                ec2_del.delete_volume(VolumeId=vol_id)
-                st.success(f"Successfully deleted volume {vol_id} from {reg}!")
-                run_scan(aws_regions, fetch_cost_history)
-                st.rerun()
-              except Exception as e:
-                st.error(f"Error: {e}")
-
-      if eips:
-        st.markdown("#### Unattached Elastic IPs Cleanup")
-        for e in eips:
-          alloc_id = e.get("AllocationId")
-          public_ip = e.get("PublicIp")
-          reg = e.get("Region", "ap-south-1")
-          col_a, col_b = st.columns([3, 1])
-          with col_a:
-            st.warning(
-                f"Public IP `{public_ip}` (Allocation ID: `{alloc_id}`) in"
-                f" Region **{reg}**"
-            )
-          with col_b:
-            if st.button(f"Release {public_ip}", key=f"rel_eip_{alloc_id}_{reg}"):
-              try:
-                ec2_rel = get_boto3_client("ec2", reg)
-                ec2_rel.release_address(AllocationId=alloc_id)
-                st.success(
-                    f"Successfully released EIP {public_ip} from {reg}!"
-                )
-                run_scan(aws_regions, fetch_cost_history)
-                st.rerun()
-              except Exception as e:
-                st.error(f"Error: {e}")
-    else:
-      st.info(
-          "💡 Check the 'Enable Risk Mode' checkbox above to unlock direct"
-          " cleanup and deletion buttons for safe resource management."
-      )
-
-    st.markdown("---")
-    st.subheader("📌 Detailed Recommendations & S3 Governance")
-    for b in s3_buckets:
-      if not b["HasLifecycle"]:
-        st.warning(
-            f"**S3 Lifecycle Recommendation:** Bucket `{b['Name']}` in Region"
-            f" **{b['Region']}** does not have a Lifecycle Policy configured."
-            " Consider adding rules to transition old objects to Glacier or"
-            " delete incomplete multipart uploads."
-        )
-      else:
-        st.info(
-            f"**S3 Governance OK:** Bucket `{b['Name']}` in Region"
-            f" **{b['Region']}** has lifecycle rules configured."
-        )
-
-    for inst in instances:
-      st.warning(
-          f"**Stopped EC2 Recommendation:** Instance (`{inst.get('ID')}`) in"
-          f" Region **{inst.get('Region')}** is in **STOPPED** state."
-      )
-
-    for v in volumes:
-      st.info(
-          f"**EBS Note:** Unattached volume (`{v.get('ID')}`) in"
-          f" **{v.get('Region')}** is ready for cleanup."
-      )
-
-    for e in eips:
-      st.info(
-          f"**Elastic IP Note:** Unattached Public IP (`{e.get('PublicIp')}`)"
-          f" in **{e.get('Region')}** can be safely released."
-      )
-
-    for lb in elbs:
-      st.info(
-          f"**Load Balancer Review:** Found Load Balancer `{lb.get('Name')}` in"
-          f" **{lb.get('Region')}**."
-      )
-  else:
-    st.success(
-        "🎉 Your cloud is fully optimized across all selected regions! No idle"
-        " resources detected."
-    )
+          with col_
