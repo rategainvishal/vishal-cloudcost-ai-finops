@@ -82,7 +82,7 @@ def run_scan(regions, fetch_costs):
       "Scanning AWS infrastructure (EC2, ELB, S3) via Boto3 and fetching Cost"
       " Explorer data... Please wait..."
   ):
-    # 1. Scan S3 Buckets (Global Service - Handled gracefully for SCP/AccessDenied)
+    # 1. Scan S3 Buckets (Handled silently without showing raw SCP warnings)
     try:
       s3_client = get_boto3_client("s3")
       buckets_res = s3_client.list_buckets()
@@ -113,11 +113,9 @@ def run_scan(regions, fetch_costs):
               ),
               "HasLifecycle": has_lifecycle,
           })
-    except Exception as e:
-      st.warning(
-          "⚠️ S3 bucket scan skipped due to AWS Organization SCP policy or"
-          f" permissions: {e}"
-      )
+    except Exception:
+      # Silently bypass S3 global list restriction if blocked by SCP/IAM
+      pass
 
     # 2. Scan Regional EC2 and ELB Resources
     for reg in regions:
