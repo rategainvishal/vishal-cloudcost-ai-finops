@@ -34,17 +34,6 @@ fetch_cost_history = st.sidebar.checkbox(
     "📈 Fetch 3-Month Cost Explorer Trends", value=True
 )
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("🪣 S3 Governance Override")
-manual_s3_input = st.sidebar.text_input(
-    "Target S3 Buckets (Comma-separated)",
-    value="",
-    help=(
-        "Bypasses global ListAllMyBuckets SCP restriction by checking specific"
-        " bucket names directly."
-    ),
-)
-
 
 # Helper function to get boto3 client securely from Streamlit Secrets or environment
 def get_boto3_client(service_name, region_name=None):
@@ -82,7 +71,7 @@ if "scanned" not in st.session_state:
 
 
 # Function to run scans safely using boto3 across selected regions
-def run_scan(regions, fetch_costs, s3_manual_list):
+def run_scan(regions, fetch_costs):
   all_volumes = []
   all_eips = []
   all_elbs = []
@@ -93,23 +82,12 @@ def run_scan(regions, fetch_costs, s3_manual_list):
       "Scanning AWS infrastructure (EC2, ELB, S3) via Boto3 and fetching Cost"
       " Explorer data... Please wait..."
   ):
-    # 1. Scan S3 Buckets (Handling SCP restriction via direct bucket targeting)
+    # 1. Scan S3 Buckets (Handled silently without showing raw SCP warnings)
     try:
       s3_client = get_boto3_client("s3")
-      target_buckets = []
-
-      if s3_manual_list.strip():
-        # Use user-provided bucket names from sidebar to bypass global list restriction
-        target_buckets = [b.strip() for b in s3_manual_list.split(",") if b.strip()]
-      else:
-        # Fallback to standard global list attempt
-        try:
-          buckets_res = s3_client.list_buckets()
-          target_buckets = [b.get("Name") for b in buckets_res.get("Buckets", [])]
-        except Exception:
-          pass
-
-      for b_name in target_buckets:
+      buckets_res = s3_client.list_buckets()
+      for b in buckets_res.get("Buckets", []):
+        b_name = b.get("Name")
         try:
           loc_res = s3_client.get_bucket_location(Bucket=b_name)
           reg = loc_res.get("LocationConstraint") or "us-east-1"
@@ -118,7 +96,7 @@ def run_scan(regions, fetch_costs, s3_manual_list):
         except Exception:
           reg = "us-east-1"
 
-        if reg in regions or not regions or s3_manual_list.strip():
+        if reg in regions or not regions:
           has_lifecycle = True
           try:
             s3_client.get_bucket_lifecycle_configuration(Bucket=b_name)
@@ -128,7 +106,11 @@ def run_scan(regions, fetch_costs, s3_manual_list):
           all_s3_buckets.append({
               "Name": b_name,
               "Region": reg,
-              "CreationDate": "Managed / Direct",
+              "CreationDate": (
+                  b.get("CreationDate").strftime("%Y-%m-%d")
+                  if b.get("CreationDate")
+                  else "N/A"
+              ),
               "HasLifecycle": has_lifecycle,
           })
     except Exception:
@@ -236,7 +218,7 @@ if st.button("🚀 Run Cloud Scan Now", type="primary"):
   if not aws_regions:
     st.warning("Please select at least one AWS region from the sidebar.")
   else:
-    run_scan(aws_regions, fetch_cost_history, manual_s3_input)
+    run_scan(aws_regions, fetch_cost_history)
 
 if st.session_state.scanned:
   volumes = st.session_state.volumes
