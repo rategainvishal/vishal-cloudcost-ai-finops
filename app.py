@@ -266,7 +266,6 @@ if st.session_state.scanned:
     st.bar_chart(df_cost.set_index("Month"))
     st.markdown("---")
 
-  # Total issues counter including S3 buckets
   total_issues = (
       len(volumes)
       + len(eips)
@@ -329,8 +328,8 @@ if st.session_state.scanned:
         + est_rds_cost
     )
 
-    # Displaying metrics across columns clearly
-    col1, col2, col3, col4, col5 = st.columns(5)
+    # Row 1: First 4 individual metrics
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
       st.metric(
           label="S3 Buckets",
@@ -350,19 +349,43 @@ if st.session_state.scanned:
       )
     with col3:
       st.metric(
-          label="NAT & RDS",
-          value=f"{len(nat_gateways) + len(rds_instances)} Active",
-          delta=f"${est_nat_cost + est_rds_cost:.0f}/mo",
-          delta_color="inverse",
-      )
-    with col4:
-      st.metric(
-          label="Wasted EBS Storage",
+          label="Unattached EBS",
           value=f"{total_ebs_size} GB",
           delta=f"-{len(volumes)} Vol",
           delta_color="inverse",
       )
+    with col4:
+      st.metric(
+          label="Unattached EIPs",
+          value=f"{len(eips)} IP(s)",
+          delta=f"${est_eip_cost:.1f}/mo",
+          delta_color="inverse",
+      )
+
+    # Row 2: Remaining individual metrics + Total impact summary
+    col5, col6, col7, col8 = st.columns(4)
     with col5:
+      st.metric(
+          label="Load Balancers",
+          value=f"{len(elbs)} ELB(s)",
+          delta=f"${est_elb_cost:.0f}/mo",
+          delta_color="inverse",
+      )
+    with col6:
+      st.metric(
+          label="NAT Gateways",
+          value=f"{len(nat_gateways)} Active",
+          delta=f"${est_nat_cost:.0f}/mo",
+          delta_color="inverse",
+      )
+    with col7:
+      st.metric(
+          label="RDS Databases",
+          value=f"{len(rds_instances)} DB(s)",
+          delta=f"${est_rds_cost:.0f}/mo",
+          delta_color="inverse",
+      )
+    with col8:
       st.metric(
           label="Est. Monthly Impact",
           value=f"${total_est_waste:.2f} / mo",
