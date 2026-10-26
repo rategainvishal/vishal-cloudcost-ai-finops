@@ -67,6 +67,8 @@ if "scanned" not in st.session_state:
   st.session_state.elbs = []
   st.session_state.instances = []
   st.session_state.s3_buckets = []
+  st.session_state.nat_gateways = []
+  st.session_state.rds_instances = []
   st.session_state.cost_data = []
 
 
@@ -77,12 +79,14 @@ def run_scan(regions, fetch_costs):
   all_elbs = []
   all_instances = []
   all_s3_buckets = []
+  all_nat_gateways = []
+  all_rds_instances = []
 
   with st.spinner(
-      "Scanning AWS infrastructure (EC2, ELB, S3) via Boto3 and fetching Cost"
-      " Explorer data... Please wait..."
+      "Scanning AWS infrastructure (EC2, ELB, S3, NAT Gateways, RDS) via Boto3"
+      " and fetching Cost Explorer data... Please wait..."
   ):
-    # 1. Scan S3 Buckets (Handled silently without showing raw SCP warnings)
+    # 1. Scan S3 Buckets
     try:
       s3_client = get_boto3_client("s3")
       buckets_res = s3_client.list_buckets()
@@ -116,11 +120,12 @@ def run_scan(regions, fetch_costs):
     except Exception:
       pass
 
-    # 2. Scan Regional EC2 and ELB Resources
+    # 2. Scan Regional Resources (EC2, ELB, NAT Gateways, RDS)
     for reg in regions:
       try:
         ec2 = get_boto3_client("ec2", reg)
         elbv2 = get_boto3_client("elbv2", reg)
+        rds = get_boto3_client("rds", reg)
 
         # Unattached EBS Volumes
         ebs_res = ec2.describe_volumes(
@@ -173,6 +178,29 @@ def run_scan(regions, fetch_costs):
                 "LaunchTime": launch_time_str,
                 "Region": reg,
             })
+
+        # NAT Gateways (Active NAT Gateways incur hourly base fees)
+        nat_res = ec2.describe_nat_gateways(
+            Filters=[{"Name": "state", "Values": ["available"]}]
+        )
+        for nat in nat_res.get("NatGateways", []):
+          all_nat_gateways.append({
+              "NatGatewayId": nat.get("NatGatewayId"),
+              "VpcId": nat.get("VpcId"),
+              "Region": reg,
+          })
+
+        # RDS Databases
+        rds_res = rds.describe_db_instances()
+        for db in rds_res.get("DBInstances", []):
+          all_rds_instances.append({
+              "DBInstanceIdentifier": db.get("DBInstanceIdentifier"),
+              "DBInstanceClass": db.get("DBInstanceClass"),
+              "Engine": db.get("Engine"),
+              "Status": db.get("DBInstanceStatus"),
+              "Region": reg,
+          })
+
       except Exception as e:
         st.error(f"Error scanning region {reg}: {e}")
 
@@ -210,6 +238,8 @@ def run_scan(regions, fetch_costs):
   st.session_state.elbs = all_elbs
   st.session_state.instances = all_instances
   st.session_state.s3_buckets = all_s3_buckets
+  st.session_state.nat_gateways = all_nat_gateways
+  st.session_state.rds_instances = all_rds_instances
   st.session_state.cost_data = cost_records
   st.session_state.scanned = True
 
@@ -226,6 +256,8 @@ if st.session_state.scanned:
   elbs = st.session_state.elbs
   instances = st.session_state.instances
   s3_buckets = st.session_state.s3_buckets
+  nat_gateways = st.session_state.nat_gateways
+  rds_instances = st.session_state.rds_instances
   cost_data = st.session_state.cost_data
 
   if cost_data:
@@ -240,17 +272,20 @@ if st.session_state.scanned:
       + len(elbs)
       + len(instances)
       + len([b for b in s3_buckets if not b["HasLifecycle"]])
+      + len(nat_gateways)
+      + len(rds_instances)
   )
 
   st.subheader("📊 Scan Results & Multi-Region Resource Analysis")
 
   if total_issues > 0:
-    st.error(
-        f"⚠️ Inefficient or idle resources detected! Found {len(volumes)} EBS"
-        f" volume(s), {len(eips)} unattached EIP(s), {len(elbs)} Load"
-        f" Balancer(s), {len(instances)} stopped EC2 instance(s), and"
-        f" {len([b for b in s3_buckets if not b['HasLifecycle']])} S3"
-        f" bucket(s) missing lifecycle policies."
+    st.warning(
+        f"⚠️ High-cost services detected! Found {len(volumes)} EBS volume(s),"
+        f" {len(eips)} EIP(s), {len(elbs)} Load Balancer(s),"
+        f" {len(instances)} stopped EC2(s),"
+        f" {len([b for b in s3_buckets if not b['HasLifecycle']])} S3 bucket(s)"
+        f" without lifecycle, {len(nat_gateways)} NAT Gateway(s), and"
+        f" {len(rds_instances)} RDS database(s)."
     )
 
     with st.expander("View Raw JSON Scan Outputs"):
@@ -264,6 +299,10 @@ if st.session_state.scanned:
       st.json(elbs)
       st.write("**S3 Buckets Analysis:**")
       st.json(s3_buckets)
+      st.write("**NAT Gateways:**")
+      st.json(nat_gateways)
+      st.write("**RDS Databases:**")
+      st.json(rds_instances)
 
     st.markdown("---")
     st.subheader("🤖 AI FinOps Advisor Report & Cost Impact")
@@ -276,6 +315,8 @@ if st.session_state.scanned:
     est_s3_waste = (
         len([b for b in s3_buckets if not b["HasLifecycle"]]) * 10.00
     )
+    est_nat_cost = len(nat_gateways) * 32.40  # Avg base cost per NAT Gateway
+    est_rds_cost = len(rds_instances) * 45.00  # Avg base cost per RDS instance
 
     total_est_waste = (
         est_ebs_cost
@@ -283,33 +324,35 @@ if st.session_state.scanned:
         + est_elb_cost
         + est_stopped_ec2_cost
         + est_s3_waste
+        + est_nat_cost
+        + est_rds_cost
     )
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
       st.metric(
-          label="Stopped EC2",
-          value=f"{len(instances)} Instance(s)",
-          delta=f"-{len(instances)} VM",
+          label="NAT Gateways",
+          value=f"{len(nat_gateways)} Active",
+          delta=f"${est_nat_cost:.0f}/mo",
           delta_color="inverse",
       )
     with col2:
+      st.metric(
+          label="RDS Databases",
+          value=f"{len(rds_instances)} DB(s)",
+          delta=f"${est_rds_cost:.0f}/mo",
+          delta_color="inverse",
+      )
+    with col3:
       st.metric(
           label="Wasted EBS Storage",
           value=f"{total_ebs_size} GB",
           delta=f"-{len(volumes)} Vol",
           delta_color="inverse",
       )
-    with col3:
-      st.metric(
-          label="S3 Without Lifecycle",
-          value=f"{len([b for b in s3_buckets if not b['HasLifecycle']])} Bucket(s)",
-          delta="Optimization Needed",
-          delta_color="inverse",
-      )
     with col4:
       st.metric(
-          label="Est. Monthly Waste",
+          label="Est. Monthly Impact",
           value=f"${total_est_waste:.2f} / mo",
           delta="High Priority",
           delta_color="inverse",
@@ -331,6 +374,8 @@ if st.session_state.scanned:
               "s3_missing_lifecycle": len(
                   [b for b in s3_buckets if not b["HasLifecycle"]]
               ),
+              "nat_gateways": len(nat_gateways),
+              "rds_instances": len(rds_instances),
           }
           payload = {
               "anthropic_version": "bedrock-2023-05-31",
@@ -339,10 +384,11 @@ if st.session_state.scanned:
                   "role": "user",
                   "content": (
                       "You are an expert Cloud FinOps AI Engineer. Review this"
-                      " idle resource summary: "
+                      " high-cost infrastructure summary: "
                       f"{json.dumps(prompt_data)}. Provide 3 actionable,"
-                      " professional bullet points on why these should be"
-                      " remediated and the long-term architectural benefits."
+                      " professional bullet points on managing NAT gateway"
+                      " traffic, RDS database right-sizing, and overall cost"
+                      " reduction."
                   ),
               }],
           }
@@ -362,9 +408,9 @@ if st.session_state.scanned:
         if not ai_success:
           st.success("AI Optimization Strategy Generated Successfully!")
           st.markdown("""
-                    * **EBS Volume Waste:** Unattached volumes continue incurring storage fees without serving workloads. Snapshot and terminate them immediately.
-                    * **Compute Governance:** Stopped EC2 instances consume EBS root volumes. Consider creating AMIs and terminating instances until needed.
-                    * **Storage Lifecycle:** S3 buckets lacking lifecycle rules accumulate unbounded log and object data. Implement 30-day IA transitions.
+                    * **NAT Gateway Optimization:** NAT Gateways charge a fixed hourly fee plus data processing fees. Consider consolidating them or using VPC Endpoints for S3/DynamoDB traffic.
+                    * **RDS Right-Sizing:** Evaluate database utilization metrics; downgrade underutilized instances or transition non-production databases to Serverless v2.
+                    * **Storage & Compute Hygiene:** Clean up unattached EBS volumes and apply S3 lifecycle rules to keep baseline expenditure minimal.
                     """)
 
     # Export CSV Feature
@@ -413,6 +459,25 @@ if st.session_state.scanned:
             "Details": f"Created: {b['CreationDate']}",
             "Est. Monthly Waste ($)": 10.00,
         })
+    for nat in nat_gateways:
+      report_rows.append({
+          "Resource Type": "NAT Gateway",
+          "Resource Identifier": nat.get("NatGatewayId"),
+          "Region": nat.get("Region"),
+          "Details": f"VPC: {nat.get('VpcId')}",
+          "Est. Monthly Waste ($)": 32.40,
+      })
+    for rds in rds_instances:
+      report_rows.append({
+          "Resource Type": "RDS Database",
+          "Resource Identifier": rds.get("DBInstanceIdentifier"),
+          "Region": rds.get("Region"),
+          "Details": (
+              f"Engine: {rds.get('Engine')} | Class:"
+              f" {rds.get('DBInstanceClass')}"
+          ),
+          "Est. Monthly Waste ($)": 45.00,
+      })
 
     df_report = pd.DataFrame(report_rows)
     csv_data = df_report.to_csv(index=False).encode("utf-8")
@@ -427,7 +492,7 @@ if st.session_state.scanned:
   else:
     st.success(
         "🎉 Your cloud is fully optimized across all selected regions! No idle"
-        " resources detected."
+        " or high-cost resources detected."
     )
 
 # Sidebar Developer Branding Footer
