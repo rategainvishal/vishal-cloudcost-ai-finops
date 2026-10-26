@@ -266,12 +266,13 @@ if st.session_state.scanned:
     st.bar_chart(df_cost.set_index("Month"))
     st.markdown("---")
 
+  # Total issues counter including S3 buckets
   total_issues = (
       len(volumes)
       + len(eips)
       + len(elbs)
       + len(instances)
-      + len([b for b in s3_buckets if not b["HasLifecycle"]])
+      + len(s3_buckets)
       + len(nat_gateways)
       + len(rds_instances)
   )
@@ -280,11 +281,11 @@ if st.session_state.scanned:
 
   if total_issues > 0:
     st.warning(
-        f"⚠️ High-cost services detected! Found {len(volumes)} EBS volume(s),"
+        f"⚠️ Resources detected! Found {len(volumes)} EBS volume(s),"
         f" {len(eips)} EIP(s), {len(elbs)} Load Balancer(s),"
         f" {len(instances)} stopped EC2(s),"
-        f" {len([b for b in s3_buckets if not b['HasLifecycle']])} S3 bucket(s)"
-        f" without lifecycle, {len(nat_gateways)} NAT Gateway(s), and"
+        f" {len(s3_buckets)} S3 bucket(s),"
+        f" {len(nat_gateways)} NAT Gateway(s), and"
         f" {len(rds_instances)} RDS database(s)."
     )
 
@@ -328,27 +329,30 @@ if st.session_state.scanned:
         + est_rds_cost
     )
 
-    # 5 Columns to display all metrics nicely
+    # Displaying metrics across columns clearly
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
       st.metric(
-          label="Stopped EC2",
-          value=f"{len(instances)} Instance(s)",
-          delta=f"-{len(instances)} VM",
+          label="S3 Buckets",
+          value=f"{len(s3_buckets)} Found",
+          delta=(
+              f"{len([b for b in s3_buckets if not b['HasLifecycle']])} No"
+              " Lifecycle"
+          ),
           delta_color="inverse",
       )
     with col2:
       st.metric(
-          label="NAT Gateways",
-          value=f"{len(nat_gateways)} Active",
-          delta=f"${est_nat_cost:.0f}/mo",
+          label="Stopped EC2",
+          value=f"{len(instances)} VM(s)",
+          delta=f"-{len(instances)} VM",
           delta_color="inverse",
       )
     with col3:
       st.metric(
-          label="RDS Databases",
-          value=f"{len(rds_instances)} DB(s)",
-          delta=f"${est_rds_cost:.0f}/mo",
+          label="NAT & RDS",
+          value=f"{len(nat_gateways) + len(rds_instances)} Active",
+          delta=f"${est_nat_cost + est_rds_cost:.0f}/mo",
           delta_color="inverse",
       )
     with col4:
@@ -375,13 +379,11 @@ if st.session_state.scanned:
         try:
           bedrock = get_boto3_client("bedrock-runtime", "us-east-1")
           prompt_data = {
+              "s3_buckets": len(s3_buckets),
               "stopped_instances": len(instances),
               "unattached_ebs_gb": total_ebs_size,
               "unattached_eips": len(eips),
               "load_balancers": len(elbs),
-              "s3_missing_lifecycle": len(
-                  [b for b in s3_buckets if not b["HasLifecycle"]]
-              ),
               "nat_gateways": len(nat_gateways),
               "rds_instances": len(rds_instances),
           }
@@ -394,9 +396,8 @@ if st.session_state.scanned:
                       "You are an expert Cloud FinOps AI Engineer. Review this"
                       " high-cost infrastructure summary: "
                       f"{json.dumps(prompt_data)}. Provide 3 actionable,"
-                      " professional bullet points on managing NAT gateway"
-                      " traffic, RDS database right-sizing, and overall cost"
-                      " reduction."
+                      " professional bullet points on S3 lifecycle policies,"
+                      " database right-sizing, and overall cost reduction."
                   ),
               }],
           }
@@ -416,9 +417,9 @@ if st.session_state.scanned:
         if not ai_success:
           st.success("AI Optimization Strategy Generated Successfully!")
           st.markdown("""
-                    * **NAT Gateway Optimization:** NAT Gateways charge a fixed hourly fee plus data processing fees. Consider consolidating them or using VPC Endpoints for S3/DynamoDB traffic.
-                    * **RDS Right-Sizing:** Evaluate database utilization metrics; downgrade underutilized instances or transition non-production databases to Serverless v2.
-                    * **Storage & Compute Hygiene:** Clean up unattached EBS volumes and apply S3 lifecycle rules to keep baseline expenditure minimal.
+                    * **S3 Lifecycle Management:** Ensure all buckets implement transition rules to Standard-IA and Glacier to minimize long-term storage expenditures.
+                    * **NAT Gateway Optimization:** NAT Gateways incur fixed hourly charges plus data transfer fees. Consolidate them or use VPC Endpoints.
+                    * **Compute & Database Hygiene:** Terminate unattached EBS volumes and right-size underutilized RDS database instances.
                     """)
 
     # Export CSV Feature
@@ -459,14 +460,16 @@ if st.session_state.scanned:
           "Est. Monthly Waste ($)": 2.40,
       })
     for b in s3_buckets:
-      if not b["HasLifecycle"]:
-        report_rows.append({
-            "Resource Type": "S3 Bucket (No Lifecycle)",
-            "Resource Identifier": b["Name"],
-            "Region": b["Region"],
-            "Details": f"Created: {b['CreationDate']}",
-            "Est. Monthly Waste ($)": 10.00,
-        })
+      report_rows.append({
+          "Resource Type": "S3 Bucket",
+          "Resource Identifier": b["Name"],
+          "Region": b["Region"],
+          "Details": (
+              f"Lifecycle Configured: {b['HasLifecycle']} | Created:"
+              f" {b['CreationDate']}"
+          ),
+          "Est. Monthly Waste ($)": 0.00 if b["HasLifecycle"] else 10.00,
+      })
     for nat in nat_gateways:
       report_rows.append({
           "Resource Type": "NAT Gateway",
@@ -499,8 +502,8 @@ if st.session_state.scanned:
     )
   else:
     st.success(
-        "🎉 Your cloud is fully optimized across all selected regions! No idle"
-        " or high-cost resources detected."
+        "🎉 Your cloud is fully optimized across all selected regions! No"
+        " resources detected."
     )
 
 # Sidebar Developer Branding Footer
