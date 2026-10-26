@@ -179,7 +179,7 @@ def run_scan(regions, fetch_costs):
                 "Region": reg,
             })
 
-        # NAT Gateways (Active NAT Gateways incur hourly base fees)
+        # NAT Gateways
         nat_res = ec2.describe_nat_gateways(
             Filters=[{"Name": "state", "Values": ["available"]}]
         )
@@ -315,8 +315,8 @@ if st.session_state.scanned:
     est_s3_waste = (
         len([b for b in s3_buckets if not b["HasLifecycle"]]) * 10.00
     )
-    est_nat_cost = len(nat_gateways) * 32.40  # Avg base cost per NAT Gateway
-    est_rds_cost = len(rds_instances) * 45.00  # Avg base cost per RDS instance
+    est_nat_cost = len(nat_gateways) * 32.40
+    est_rds_cost = len(rds_instances) * 45.00
 
     total_est_waste = (
         est_ebs_cost
@@ -328,29 +328,37 @@ if st.session_state.scanned:
         + est_rds_cost
     )
 
-    col1, col2, col3, col4 = st.columns(4)
+    # 5 Columns to display all metrics nicely
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
+      st.metric(
+          label="Stopped EC2",
+          value=f"{len(instances)} Instance(s)",
+          delta=f"-{len(instances)} VM",
+          delta_color="inverse",
+      )
+    with col2:
       st.metric(
           label="NAT Gateways",
           value=f"{len(nat_gateways)} Active",
           delta=f"${est_nat_cost:.0f}/mo",
           delta_color="inverse",
       )
-    with col2:
+    with col3:
       st.metric(
           label="RDS Databases",
           value=f"{len(rds_instances)} DB(s)",
           delta=f"${est_rds_cost:.0f}/mo",
           delta_color="inverse",
       )
-    with col3:
+    with col4:
       st.metric(
           label="Wasted EBS Storage",
           value=f"{total_ebs_size} GB",
           delta=f"-{len(volumes)} Vol",
           delta_color="inverse",
       )
-    with col4:
+    with col5:
       st.metric(
           label="Est. Monthly Impact",
           value=f"${total_est_waste:.2f} / mo",
